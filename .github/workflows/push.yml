@@ -1,0 +1,96 @@
+#=================================================
+#   Description: Build OpenWrt using GitHub Actions
+#   Lisence: MIT
+#   Author: P3TERX
+#   Blog: https://p3terx.com
+#=================================================
+
+name: Build OpenWrt
+
+on: 
+  release:
+    types: [published]
+
+  push:
+    branches: 
+      - master
+    tags:        
+      - release
+      - v18.06
+#   schedule:
+#     - cron: '0 15 * * 4'
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+
+    steps:
+    - name: Checkout - clone repository
+      uses: actions/checkout@v1
+
+    - name: Install - system build dependencies
+      run: |
+        sudo -E apt update && sudo -E apt upgrade -y
+        sudo -E apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler
+
+    - name: Clone - Lean openwrt source code
+      run: |
+        git clone https://github.com/coolsnowwolf/lede openwrt
+
+    - name: Clone - openwrt plugin source
+      run: |
+        cd openwrt
+        git clone -b openwrt-18.06 https://github.com/rosywrt/luci-theme-rosy.git package/luci-theme-rosy
+
+    - name: Update - openwrt source update
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        
+    - name: Install - openwrt source install
+      run: |
+        cd openwrt
+        ./scripts/feeds install -a
+
+    - name: Fix Mac80211 error
+      run: |
+        rm -rf openwrt/package/kernel/mac80211
+        git clone https://github.com/openwrt/openwrt openwrt-official
+        cp -r openwrt-official/package/kernel/mac80211 openwrt/package/kernel/mac80211
+
+    - name: Config - copy build config
+      run: |
+        chmod +x shell.sh && ./shell.sh
+        [ -e ".config" ] && cp .config openwrt
+        cd openwrt
+        make defconfig
+
+    - name: Download - openwrt build dependencies
+      run: |
+        cd openwrt
+        make download -j8
+
+    - name: Build - make openwrt source
+      run: |
+        cd openwrt
+        make -j$(nproc) V=s
+
+    - name: Pack - Pack IPK to zip
+      run: |
+        cd openwrt/bin/targets/x86/64/
+        tar -zcvf packages.tar.gz ./packages/
+        rm -rf packages/
+  
+    - name : Upload - push to artifact file
+      uses: actions/upload-artifact@v1
+      with:
+        name: OpenWrt
+        path: openwrt/bin
+
+    - name: Release - push to release file
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: openwrt/bin/targets/x86/64/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASES_DEPLOY_TOKEN }}
